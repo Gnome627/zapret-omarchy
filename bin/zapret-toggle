@@ -1,0 +1,370 @@
+#!/bin/bash
+# Обёртка над zapret (nfqws): обход DPI для Discord и YouTube.
+# Окошко управления открывается по Super+Z (плагин gnome627.zapret).
+# Системная часть: zapret-toggle@<стратегия>.service, конфиги в /etc/zapret-toggle/.
+
+set -u
+
+SELF=$(readlink -f "$0")
+STRATEGY_DIR=/etc/zapret-toggle/strategies
+STATE_DIR=${XDG_CONFIG_HOME:-$HOME/.config}/zapret-toggle
+STATE_FILE=$STATE_DIR/strategy
+AUTOSTART_FILE=$STATE_DIR/autostart
+LOGO_FILE=${XDG_DATA_HOME:-$HOME/.local/share}/zapret-toggle/logo.txt
+PLUGIN_ID=gnome627.zapret
+
+# Секунд на один запрос. С рабочей стратегией ответ приходит за доли секунды,
+# а заблокированное соединение просто висит, так что ждать дольше нет смысла.
+PROBE_TIMEOUT=3
+
+# По этим адресам автоподбор решает, работает ли стратегия.
+TEST_URLS=(
+  https://discord.com
+  https://gateway.discord.gg
+  https://www.youtube.com
+  https://i.ytimg.com/generate_204
+  https://redirector.googlevideo.com
+)
+
+# Список для команды check: подпись и адрес.
+CHECK_HOSTS=(
+  "Discord|discord.com"
+  "Discord|gateway.discord.gg"
+  "Discord|cdn.discordapp.com"
+  "Discord|media.discordapp.net"
+  "Discord|discord.gg"
+  "Discord|status.discord.com"
+  "YouTube|www.youtube.com"
+  "YouTube|m.youtube.com"
+  "YouTube|youtu.be"
+  "YouTube|i.ytimg.com"
+  "YouTube|yt3.ggpht.com"
+  "YouTube|redirector.googlevideo.com"
+  "YouTube|youtubei.googleapis.com"
+  "YouTube|www.youtube-nocookie.com"
+  "Контроль|github.com"
+  "Контроль|www.google.com"
+)
+
+notify() {
+  command -v notify-send >/dev/null || return 0
+  # Заменяем предыдущее уведомление, а не копим стопку.
+  local idfile=${XDG_RUNTIME_DIR:-/tmp}/zapret-toggle.notify id=0
+  [[ -r $idfile ]] && id=$(<"$idfile")
+  notify-send -a Zapret -t 2500 -p -r "${id:-0}" "$1" "${2:-}" >"$idfile" 2>/dev/null
+}
+
+strategies() {
+  local f
+  for f in "$STRATEGY_DIR"/*.args; do
+    [[ -e $f ]] && basename "$f" .args
+  done
+}
+
+describe() {
+  sed -n '1s/^# *//p' "$STRATEGY_DIR/$1.args"
+}
+
+current_strategy() {
+  local s=""
+  [[ -r $STATE_FILE ]] && s=$(<"$STATE_FILE")
+  [[ -n $s && -r $STRATEGY_DIR/$s.args ]] || s=$(strategies | head -n1)
+  echo "$s"
+}
+
+save_strategy() {
+  mkdir -p "$STATE_DIR"
+  echo "$1" >"$STATE_FILE"
+}
+
+active_units() {
+  systemctl list-units 'zapret-toggle@*.service' --state=active,activating \
+    --no-legend --plain 2>/dev/null | awk '{print $1}'
+}
+
+active_strategy() {
+  active_units | head -n1 | sed -E 's/^zapret-toggle@(.*)\.service$/\1/'
+}
+
+stop_all() {
+  local u
+  for u in $(active_units); do
+    systemctl stop "$u" || return 1
+  done
+}
+
+start() {
+  stop_all || return 1
+  systemctl start "zapret-toggle@$1.service" || return 1
+  sleep 0.2
+  systemctl is-active --quiet "zapret-toggle@$1.service"
+}
+
+# Опрашивает все адреса одновременно; в каталог $1 кладёт по файлу на адрес
+# с "<код> <секунды>". Код 000 значит, что TLS-рукопожатие не прошло.
+probe_all() {
+  local dir=$1 i=0 url
+  shift
+  for url in "$@"; do
+    curl -4 -s -o /dev/null -m "$PROBE_TIMEOUT" --connect-timeout 2 \
+      -w '%{http_code} %{time_total}' "$url" >"$dir/$i" 2>/dev/null &
+    i=$((i + 1))
+  done
+  wait
+}
+
+cmd_on() {
+  local s=${1:-}
+  [[ -n $s ]] || s=$(current_strategy)
+  if start "$s"; then
+    notify "Zapret включён" "Стратегия: $s"
+    echo "on ($s)"
+  else
+    notify "Zapret: ошибка запуска" "journalctl -u zapret-toggle@$s"
+    echo "failed to start zapret-toggle@$s" >&2
+    return 1
+  fi
+}
+
+cmd_off() {
+  if stop_all; then
+    notify "Zapret выключен"
+    echo "off"
+  else
+    notify "Zapret: не удалось остановить"
+    return 1
+  fi
+}
+
+cmd_status() {
+  local a
+  a=$(active_strategy)
+  if [[ -n $a ]]; then
+    echo "on ($a)"
+  else
+    echo "off (выбрана стратегия: $(current_strategy))"
+  fi
+}
+
+cmd_list() {
+  local s cur
+  cur=$(current_strategy)
+  for s in $(strategies); do
+    printf '%s %-32s %s\n' "$([[ $s == "$cur" ]] && echo '*' || echo ' ')" "$s" "$(describe "$s")"
+  done
+}
+
+cmd_strategy() {
+  local s=${1:-}
+  if [[ -z $s ]]; then
+    cmd_list
+    return
+  fi
+  if [[ ! -r $STRATEGY_DIR/$s.args ]]; then
+    # Разрешаем указывать только номер: "zapret-toggle strategy 8"
+    s=$(strategies | grep -m1 -E "^0*$1-" || true)
+    [[ -n $s ]] || { echo "нет такой стратегии: $1" >&2; return 1; }
+  fi
+  save_strategy "$s"
+  [[ -n $(active_strategy) ]] && { cmd_on "$s"; return; }
+  echo "выбрана стратегия: $s"
+}
+
+# Автозапуск — это флаг-файл: при входе в сессию Hyprland вызывает
+# "zapret-toggle autostart run", и zapret включается, если флаг стоит.
+cmd_autostart() {
+  case ${1:-status} in
+    status) [[ -e $AUTOSTART_FILE ]] ;;
+    on)
+      mkdir -p "$STATE_DIR" && touch "$AUTOSTART_FILE"
+      notify "Zapret: автозапуск включён"
+      ;;
+    off)
+      rm -f "$AUTOSTART_FILE"
+      notify "Zapret: автозапуск выключен"
+      ;;
+    toggle) if [[ -e $AUTOSTART_FILE ]]; then cmd_autostart off; else cmd_autostart on; fi ;;
+    run) [[ -e $AUTOSTART_FILE ]] && start "$(current_strategy)" ;;
+    *) echo "autostart [status|on|off|toggle|run]" >&2; return 2 ;;
+  esac
+}
+
+# Правка списка доменов (нужен пароль sudo) с перезапуском, если zapret включён.
+cmd_hosts() {
+  sudoedit /etc/zapret-toggle/hosts.txt || return 1
+  local a
+  a=$(active_strategy)
+  [[ -z $a ]] || cmd_on "$a"
+}
+
+# Перебирает стратегии и оставляет включённой первую, с которой открывается всё.
+# С --all проходит весь список и показывает результат каждой.
+cmd_test() {
+  local all=0 s i ok total=${#TEST_URLS[@]} best="" best_ok=-1 tmp code
+  [[ ${1:-} == --all ]] && all=1
+  tmp=$(mktemp -d)
+
+  # Если перебор прервали (закрыли терминал, Ctrl+C), возвращаем то, что было,
+  # а не оставляем включённой стратегию, на которой остановились.
+  local was_on
+  was_on=$(active_strategy)
+  trap 'rm -rf "$tmp"; if [[ -n $was_on ]]; then start "$was_on"; else stop_all; fi; exit 130' INT TERM HUP
+
+  printf 'Проверяю %d стратегий на %d адресах (до %d с на стратегию)\n\n' \
+    "$(strategies | wc -l)" "$total" "$PROBE_TIMEOUT"
+
+  for s in $(strategies); do
+    printf '  %-32s ' "$s"
+    if ! start "$s"; then
+      echo "не запустилась"
+      continue
+    fi
+    probe_all "$tmp" "${TEST_URLS[@]}"
+    ok=0
+    for ((i = 0; i < total; i++)); do
+      read -r code _ <"$tmp/$i"
+      if [[ ${code:-000} != 000 ]]; then
+        ok=$((ok + 1))
+        printf '\033[32m●\033[0m'
+      else
+        printf '\033[31m○\033[0m'
+      fi
+    done
+    echo " $ok/$total"
+    if ((ok > best_ok)); then
+      best=$s
+      best_ok=$ok
+    fi
+    ((ok == total && !all)) && break
+  done
+  rm -rf "$tmp"
+  trap - INT TERM HUP
+  echo
+
+  if ((best_ok <= 0)); then
+    stop_all
+    echo "Ни одна стратегия не сработала."
+    notify "Zapret: ни одна стратегия не сработала"
+    return 1
+  fi
+  save_strategy "$best"
+  cmd_on "$best" >/dev/null
+  echo "Выбрана: $best ($best_ok/$total)"
+}
+
+# Для недоступного домена: если по адресу от публичного DNS он открывается,
+# значит системный DNS отдаёт подменённый адрес и zapret тут не поможет.
+diagnose() {
+  local real
+  real=$(curl -s -m 5 -H 'accept: application/dns-json' \
+    "https://1.1.1.1/dns-query?name=$1&type=A" 2>/dev/null |
+    jq -r '[.Answer[]? | select(.type == 1)][0].data // empty' 2>/dev/null)
+  if [[ -n $real ]] && ! getent ahostsv4 "$1" | grep -qF "$real " &&
+    [[ $(curl -4 -s -o /dev/null -m "$PROBE_TIMEOUT" --resolve "$1:443:$real" \
+      -w '%{http_code}' "https://$1" 2>/dev/null) != 000 ]]; then
+    echo "недоступен: DNS подменяет адрес"
+  else
+    echo "недоступен"
+  fi
+}
+
+# Проходит по основным доменам и показывает, какие сейчас открываются.
+cmd_check() {
+  local tmp i entry group host label code secs prev="" ok=0 total=0 urls=()
+  for entry in "${CHECK_HOSTS[@]}"; do
+    urls+=("https://${entry#*|}")
+  done
+  tmp=$(mktemp -d)
+
+  printf 'Zapret: %s\n\n' "$(cmd_status)"
+  probe_all "$tmp" "${urls[@]}"
+
+  for ((i = 0; i < ${#CHECK_HOSTS[@]}; i++)); do
+    entry=${CHECK_HOSTS[i]}
+    group=${entry%%|*}
+    host=${entry#*|}
+    # Дополняем подпись пробелами вручную: printf считает ширину в байтах.
+    label=""
+    if [[ $group != "$prev" ]]; then
+      label=$group
+      prev=$group
+    fi
+    label+=$(printf '%*s' $((9 - ${#label})) '')
+    read -r code secs <"$tmp/$i"
+    if [[ ${code:-000} != 000 ]]; then
+      printf '  %-9s \033[32m●\033[0m %-28s %4d мс\n' "$label" "$host" "$(awk -v s="$secs" 'BEGIN { printf "%d", s * 1000 }')"
+      [[ $group == Контроль ]] || ok=$((ok + 1))
+    else
+      printf '  %-9s \033[31m○\033[0m %-28s %s\n' "$label" "$host" "$(diagnose "$host")"
+    fi
+    [[ $group == Контроль ]] || total=$((total + 1))
+  done
+  rm -rf "$tmp"
+
+  printf '\nОткрывается %d из %d.\n' "$ok" "$total"
+  ((ok == total))
+}
+
+# Состояние для окошка, одним JSON.
+cmd_state() {
+  local s cur active list
+  cur=$(current_strategy)
+  active=$(active_strategy)
+  list=$(for s in $(strategies); do printf '%s\t%s\n' "$s" "$(describe "$s")"; done |
+    jq -Rn '[inputs | split("\t") | {name: .[0], description: .[1]}]')
+  jq -n --arg active "$active" --arg strategy "$cur" --rawfile logo "$LOGO_FILE" \
+    --argjson autostart "$([[ -e $AUTOSTART_FILE ]] && echo true || echo false)" \
+    --argjson strategies "$list" \
+    '{on: ($active != ""), strategy: (if $active != "" then $active else $strategy end),
+      autostart: $autostart, strategies: $strategies, logo: $logo}'
+}
+
+# Запускает подкоманду в плавающем терминале Omarchy с логотипом zapret.
+cmd_term() {
+  exec setsid uwsm-app -- xdg-terminal-exec --app-id=org.omarchy.terminal --title=Zapret \
+    -e "$SELF" present "$@"
+}
+
+cmd_present() {
+  clear
+  printf '\033[32m'
+  sed 's/^/  /' "$LOGO_FILE"
+  printf '\033[0m\n'
+  "$SELF" "$@"
+  (($? == 130)) || omarchy-show-done
+}
+
+case ${1:-menu} in
+  menu) exec omarchy-shell shell toggle "$PLUGIN_ID" '{}' ;;
+  toggle) if [[ -n $(active_strategy) ]]; then cmd_off; else cmd_on; fi ;;
+  on) cmd_on "${2:-}" ;;
+  off) cmd_off ;;
+  status) cmd_status ;;
+  is-on) [[ -n $(active_strategy) ]] ;;
+  current) current_strategy ;;
+  list) cmd_list ;;
+  strategy) cmd_strategy "${2:-}" ;;
+  test) cmd_test "${2:-}" ;;
+  check) cmd_check ;;
+  autostart) cmd_autostart "${2:-}" ;;
+  hosts) cmd_hosts ;;
+  state) cmd_state ;;
+  term) cmd_term "${@:2}" ;;
+  present) cmd_present "${@:2}" ;;
+  *)
+    cat <<USAGE
+Использование: zapret-toggle [команда]
+  menu             открыть/закрыть окошко (по умолчанию, Super+Z)
+  toggle           включить/выключить
+  on | off         включить / выключить
+  status           текущее состояние
+  check            пройтись по доменам и показать, что открывается
+  list             список стратегий
+  strategy <имя>   выбрать стратегию (можно только номер)
+  test [--all]     перебрать стратегии и выбрать рабочую
+  autostart <on|off|toggle|status>   автозапуск при входе в систему
+  hosts            править список доменов
+  term <команда>   выполнить команду в плавающем терминале
+USAGE
+    ;;
+esac

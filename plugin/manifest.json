@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "gnome627.zapret",
+  "name": "Zapret",
+  "version": "1.0.0",
+  "author": "gnome627",
+  "description": "Окошко управления zapret: включение, автозапуск, стратегии, проверка доменов",
+  "kinds": [
+    "overlay"
+  ],
+  "entryPoints": {
+    "overlay": "Zapret.qml"
+  }
+}

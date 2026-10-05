@@ -1,0 +1,2 @@
+# Только фейк, умирает по TTL
+--dpi-desync=fake --dpi-desync-repeats=6 --dpi-desync-autottl=2 --dpi-desync-fake-tls=%FAKE%/tls_clienthello_www_google_com.bin

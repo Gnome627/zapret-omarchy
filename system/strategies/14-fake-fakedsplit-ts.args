@@ -1,0 +1,2 @@
+# Фейк + fakedsplit, timestamp
+--dpi-desync=fake,fakedsplit --dpi-desync-split-pos=1 --dpi-desync-repeats=6 --dpi-desync-fooling=ts --dpi-desync-fakedsplit-pattern=0x00 --dpi-desync-fake-tls=%FAKE%/tls_clienthello_www_google_com.bin

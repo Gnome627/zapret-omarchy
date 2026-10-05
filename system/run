@@ -1,0 +1,23 @@
+#!/bin/bash
+# Запускает nfqws с выбранной стратегией. Вызывается из zapret-toggle@.service.
+set -euo pipefail
+
+name=${1:?strategy name required}
+[[ $name =~ ^[a-z0-9_-]+$ ]] || { echo "bad strategy name: $name" >&2; exit 2; }
+
+conf=/etc/zapret-toggle
+fake=/opt/zapret/files/fake
+hosts=$conf/hosts.txt
+file=$conf/strategies/$name.args
+[[ -r $file ]] || { echo "no such strategy: $name" >&2; exit 2; }
+
+# shellcheck disable=SC2207
+tls=($(grep -v '^[[:space:]]*#' "$file" | sed "s|%FAKE%|$fake|g"))
+
+exec /opt/zapret/nfq/nfqws --qnum=200 --user=zapret --dpi-desync-fwmark=0x40000000 "${@:2}" \
+  --filter-udp=443 --hostlist="$hosts" --dpi-desync=fake --dpi-desync-repeats=6 \
+    --dpi-desync-fake-quic="$fake/quic_initial_www_google_com.bin" --new \
+  --filter-udp=19294-19344,50000-50100 --filter-l7=discord,stun --dpi-desync=fake --dpi-desync-repeats=6 --new \
+  --filter-tcp=80 --hostlist="$hosts" --dpi-desync=fake,multisplit --dpi-desync-split-pos=method+2 \
+    --dpi-desync-fooling=md5sig --new \
+  --filter-tcp=443 --hostlist="$hosts" "${tls[@]}"

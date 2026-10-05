@@ -1,0 +1,2 @@
+# Фейк + разрез, badseq
+--dpi-desync=fake,multisplit --dpi-desync-split-pos=1 --dpi-desync-repeats=6 --dpi-desync-fooling=badseq --dpi-desync-badseq-increment=2 --dpi-desync-fake-tls=%FAKE%/tls_clienthello_www_google_com.bin

@@ -1,0 +1,2 @@
+# Фейк + обратный порядок, TTL
+--dpi-desync=fake,multidisorder --dpi-desync-split-pos=1,midsld --dpi-desync-repeats=6 --dpi-desync-autottl=2

@@ -1,0 +1,2 @@
+# Обратный порядок с перекрытием, без фейков
+--dpi-desync=multidisorder --dpi-desync-split-pos=2 --dpi-desync-split-seqovl=1

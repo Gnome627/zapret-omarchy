@@ -1,0 +1,2 @@
+# Разрез с перекрытием seqovl=568, без фейков
+--dpi-desync=multisplit --dpi-desync-split-seqovl=568 --dpi-desync-split-pos=1 --dpi-desync-split-seqovl-pattern=%FAKE%/tls_clienthello_www_google_com.bin

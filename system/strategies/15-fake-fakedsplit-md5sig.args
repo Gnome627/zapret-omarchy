@@ -1,0 +1,2 @@
+# Фейк с SNI google + fakedsplit, md5sig
+--dpi-desync=fake,fakedsplit --dpi-desync-split-pos=1 --dpi-desync-repeats=6 --dpi-desync-fooling=md5sig --dpi-desync-fake-tls-mod=rnd,dupsid,sni=www.google.com
