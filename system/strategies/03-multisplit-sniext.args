@@ -1,2 +1,3 @@
-# Разрез по расширению SNI с перекрытием
+# Split at the SNI extension with overlap
+# ru: Разрез по расширению SNI с перекрытием
 --dpi-desync=multisplit --dpi-desync-split-pos=2,sniext+1 --dpi-desync-split-seqovl=679 --dpi-desync-split-seqovl-pattern=%FAKE%/tls_clienthello_www_google_com.bin

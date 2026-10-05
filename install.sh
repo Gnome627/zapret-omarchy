@@ -1,7 +1,7 @@
 #!/bin/bash
-# zapret: обход DPI для Discord и YouTube. Ставится на Arch и Debian/Ubuntu;
-# в Omarchy дополнительно появляется окошко управления по Super+Z.
-# Запускать от обычного пользователя; пароль sudo спросит сам. Повторный запуск безопасен.
+# zapret: DPI bypass for Discord and YouTube. Installs on Arch and Debian/Ubuntu;
+# on Omarchy it also adds a control window on Super+Z.
+# Run as a regular user; it asks for the sudo password itself. Safe to re-run.
 set -euo pipefail
 
 repo=$(dirname "$(readlink -f "$0")")
@@ -14,19 +14,19 @@ menu=$HOME/.config/omarchy/extensions/omarchy-menu.jsonc
 
 step() { echo -e "\n==> $*"; }
 die() {
-  echo "Ошибка: $*" >&2
+  echo "Error: $*" >&2
   exit 1
 }
 
-((EUID != 0)) || die "запускайте без sudo, от своего пользователя"
-command -v systemctl >/dev/null || die "нужен systemd"
+((EUID != 0)) || die "run it without sudo, as your own user"
+command -v systemctl >/dev/null || die "systemd is required"
 
-# На Arch zapret берётся из AUR, на Debian/Ubuntu собирается из исходников:
-# в их репозиториях его нет.
+# On Arch zapret comes from the AUR; on Debian/Ubuntu it is built from source
+# because their repositories do not carry it.
 install_arch() {
   sudo pacman -S --needed --noconfirm nftables curl jq
   [[ -x /opt/zapret/nfq/nfqws ]] && return
-  command -v yay >/dev/null || die "нужен yay, чтобы поставить zapret-git из AUR"
+  command -v yay >/dev/null || die "yay is required to install zapret-git from the AUR"
   yay -S --needed --noconfirm zapret-git
 }
 
@@ -45,26 +45,26 @@ install_debian() {
   sudo install -Dm755 "$src/nfq/nfqws" /opt/zapret/nfq/nfqws
   sudo install -d /opt/zapret/files/fake
   sudo install -m644 "$src"/files/fake/* /opt/zapret/files/fake/
-  # По этой метке uninstall.sh понимает, что /opt/zapret ставили мы, а не пакет.
+  # This marker tells uninstall.sh that /opt/zapret was put there by us, not by a package.
   sudo touch /opt/zapret/.built-by-zapret-omarchy
   rm -rf "$src"
 }
 
-step "Зависимости и zapret"
+step "Dependencies and zapret"
 if command -v pacman >/dev/null; then
   install_arch
 elif command -v apt-get >/dev/null; then
   install_debian
 else
-  die "поддерживаются только Arch и Debian/Ubuntu"
+  die "only Arch and Debian/Ubuntu are supported"
 fi
 
-step "Системные файлы: стратегии, правила nftables, сервис, правило polkit"
+step "System files: strategies, nftables rules, service, polkit rule"
 sudo install -d /etc/zapret-toggle/strategies /usr/local/lib/zapret-toggle
 sudo rm -f /etc/zapret-toggle/strategies/*.args
 sudo install -m644 "$repo"/system/strategies/*.args /etc/zapret-toggle/strategies/
 sudo install -m644 "$repo/system/rules.nft" /etc/zapret-toggle/rules.nft
-# Список доменов мог быть дополнен вручную, поэтому существующий не трогаем.
+# The hostlist may have been extended by hand, so an existing one is left alone.
 [[ -e /etc/zapret-toggle/hosts.txt ]] || sudo install -m644 "$repo/system/hosts.txt" /etc/zapret-toggle/hosts.txt
 sudo install -m755 "$repo/system/run" /usr/local/lib/zapret-toggle/run
 sudo install -m644 "$repo/system/zapret-toggle@.service" /etc/systemd/system/zapret-toggle@.service
@@ -76,39 +76,38 @@ sudo systemctl daemon-reload
 for f in /etc/zapret-toggle/strategies/*.args; do
   name=$(basename "$f" .args)
   sudo /usr/local/lib/zapret-toggle/run "$name" --dry-run >/dev/null 2>&1 ||
-    echo "Предупреждение: nfqws не принимает стратегию $name"
+    echo "Warning: nfqws rejects strategy $name"
 done
 
-# Правила polkit на JavaScript появились в версии 0.106; в более старых
-# (Ubuntu 22.04, Debian 11) наше правило не действует.
+# JavaScript polkit rules appeared in version 0.106; on older ones
+# (Ubuntu 22.04, Debian 11) our rule has no effect.
 polkit_version=$(pkaction --version 2>/dev/null | grep -oE '[0-9]+(\.[0-9]+)?' | head -n1 || true)
 if [[ -z $polkit_version ]] || awk -v v="$polkit_version" 'BEGIN { exit !(v < 0.106) }'; then
-  echo "Предупреждение: polkit старый или не найден, включать и выключать придётся через sudo:"
-  echo "  sudo systemctl start|stop zapret-toggle@<стратегия>"
+  echo "Warning: polkit is old or missing, so zapret-toggle will ask for the sudo password."
 fi
 
-step "Скрипт zapret-toggle и логотип"
+step "zapret-toggle script and logo"
 install -Dm755 "$repo/bin/zapret-toggle" "$HOME/.local/bin/zapret-toggle"
 install -Dm644 "$repo/share/logo.txt" "$HOME/.local/share/zapret-toggle/logo.txt"
 case ":$PATH:" in
   *":$HOME/.local/bin:"*) ;;
-  *) echo "Каталога ~/.local/bin нет в PATH: перезайдите в систему или запускайте ~/.local/bin/zapret-toggle" ;;
+  *) echo "~/.local/bin is not in PATH: log in again or run ~/.local/bin/zapret-toggle" ;;
 esac
 
 if command -v omarchy-shell >/dev/null; then
-  step "Окошко: плагин оболочки Omarchy"
+  step "Control window: Omarchy shell plugin"
   install -Dm644 "$repo/plugin/manifest.json" "$plugin_dir/manifest.json"
   install -Dm644 "$repo/plugin/Zapret.qml" "$plugin_dir/Zapret.qml"
   omarchy-shell shell rescanPlugins >/dev/null 2>&1 || true
   omarchy plugin enable "$plugin_id"
 
-  step "Super+Z, автозапуск и строка в меню Omarchy"
+  step "Super+Z, autostart and the Omarchy menu entry"
   if grep -q "zapret-toggle" "$bindings"; then
-    echo "Привязка уже есть"
+    echo "The binding is already there"
   else
     cat >>"$bindings" <<'LUA'
 
--- Zapret (обход DPI для Discord и YouTube): окошко управления.
+-- Zapret (DPI bypass for Discord and YouTube): control window.
 o.bind("SUPER + Z", "Zapret", os.getenv("HOME") .. "/.local/bin/zapret-toggle menu")
 LUA
   fi
@@ -116,7 +115,7 @@ LUA
   if ! grep -q "zapret-toggle" "$autostart"; then
     cat >>"$autostart" <<'LUA'
 
--- Zapret: включается при входе, если в окошке (Super+Z) включён автозапуск.
+-- Zapret: starts on login if autostart is enabled in the window (Super+Z).
 o.launch_on_start(os.getenv("HOME") .. "/.local/bin/zapret-toggle autostart run")
 LUA
   fi
@@ -124,21 +123,26 @@ LUA
   hyprctl configerrors
 
   if [[ -e $menu ]] && ! grep -q '"zapret"' "$menu"; then
-    # Строка вставляется перед закрывающей скобкой файла.
-    row='  "zapret": {"icon":"󰒃","label":"Zapret","aliases":["zapret","dpi"],"description":"Обход блокировок Discord и YouTube","action":"$HOME/.local/bin/zapret-toggle menu"},'
+    # The menu entry is described in Russian for ru locales, in English otherwise.
+    case ${LC_ALL:-${LC_MESSAGES:-${LANG:-}}} in
+      ru*) description="Обход блокировок Discord и YouTube" ;;
+      *) description="Unblock Discord and YouTube" ;;
+    esac
+    # The row goes right before the closing brace of the file.
+    row='  "zapret": {"icon":"󰒃","label":"Zapret","aliases":["zapret","dpi"],"description":"'$description'","action":"$HOME/.local/bin/zapret-toggle menu"},'
     last=$(grep -n '^}' "$menu" | tail -n1 | cut -d: -f1)
     sed -i "${last}i\\$row" "$menu"
   fi
 fi
 
-step "Подбор рабочей стратегии"
+step "Picking a working strategy"
 "$HOME/.local/bin/zapret-toggle" test || true
 
 if command -v omarchy-shell >/dev/null; then
-  step "Готово. Super+Z открывает окошко."
-  echo "Если окошко не появляется, перезапустите оболочку: omarchy restart shell"
+  step "Done. Super+Z opens the control window."
+  echo "If the window does not appear, restart the shell: omarchy restart shell"
 else
-  step "Готово. Управление из терминала: zapret-toggle help"
-  echo "Окошко есть только в Omarchy. Автозапуск: добавьте в автозагрузку своей"
-  echo "среды команду \"zapret-toggle autostart run\" и включите zapret-toggle autostart on."
+  step "Done. Control it from a terminal: zapret-toggle help"
+  echo "The control window exists only on Omarchy. For autostart, add the command"
+  echo "\"zapret-toggle autostart run\" to your session startup and run zapret-toggle autostart on."
 fi

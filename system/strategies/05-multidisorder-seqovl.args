@@ -1,2 +1,3 @@
-# Обратный порядок с перекрытием, без фейков
+# Reverse-order split with overlap, no fakes
+# ru: Обратный порядок с перекрытием, без фейков
 --dpi-desync=multidisorder --dpi-desync-split-pos=2 --dpi-desync-split-seqovl=1

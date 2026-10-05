@@ -1,2 +1,3 @@
-# Фейк + обратный порядок, badseq+md5sig
+# Fake + reverse-order split, badseq+md5sig
+# ru: Фейк + обратный порядок, badseq+md5sig
 --dpi-desync=fake,multidisorder --dpi-desync-split-pos=1,midsld --dpi-desync-repeats=6 --dpi-desync-fooling=badseq,md5sig

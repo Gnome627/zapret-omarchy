@@ -5,8 +5,8 @@ import QtQuick
 import qs.Commons
 import qs.Ui
 
-// Окошко управления zapret (Super+Z). Всю работу делает ~/.local/bin/zapret-toggle:
-// отсюда только читается его состояние и запускаются его подкоманды.
+// Zapret control window (Super+Z). All the work is done by ~/.local/bin/zapret-toggle:
+// this only reads its state and runs its subcommands.
 Item {
   id: root
 
@@ -15,6 +15,16 @@ Item {
   property var manifest: null
 
   readonly property string cli: Quickshell.env("HOME") + "/.local/bin/zapret-toggle"
+
+  // Russian for ru locales, English for everything else.
+  readonly property bool russian: {
+    var lang = Quickshell.env("LC_ALL") || Quickshell.env("LC_MESSAGES") || Quickshell.env("LANG") || Qt.locale().name
+    return String(lang).toLowerCase().indexOf("ru") === 0
+  }
+
+  function tr(ru, en) {
+    return root.russian ? ru : en
+  }
 
   property bool opened: false
   property string view: "main"        // main | strategy
@@ -46,12 +56,12 @@ Item {
 
   function mainRows() {
     return [
-      { icon: "󰐥", label: "Включён", detail: "", checked: root.zapret.on, kind: "run", args: ["toggle"] },
-      { icon: "󰑓", label: "Автозапуск", detail: "", checked: root.zapret.autostart, kind: "run", args: ["autostart", "toggle"] },
-      { icon: "󰒓", label: "Стратегия", detail: "", value: root.zapret.strategy, checked: false, kind: "menu", args: [] },
-      { icon: "󰄴", label: "Проверка", detail: "", checked: false, kind: "term", args: ["check"] },
-      { icon: "󰙨", label: "Автоподбор", detail: "", checked: false, kind: "term", args: ["test"] },
-      { icon: "󰈙", label: "Список доменов", detail: "", checked: false, kind: "term", args: ["hosts"] }
+      { icon: "󰐥", label: root.tr("Включён", "Enabled"), detail: "", checked: root.zapret.on, kind: "run", args: ["toggle"] },
+      { icon: "󰑓", label: root.tr("Автозапуск", "Autostart"), detail: "", checked: root.zapret.autostart, kind: "run", args: ["autostart", "toggle"] },
+      { icon: "󰒓", label: root.tr("Стратегия", "Strategy"), detail: "", value: root.zapret.strategy, checked: false, kind: "menu", args: [] },
+      { icon: "󰄴", label: root.tr("Проверка", "Check"), detail: "", checked: false, kind: "term", args: ["check"] },
+      { icon: "󰙨", label: root.tr("Автоподбор", "Autopick"), detail: "", checked: false, kind: "term", args: ["test"] },
+      { icon: "󰈙", label: root.tr("Список доменов", "Hostlist"), detail: "", checked: false, kind: "term", args: ["hosts"] }
     ]
   }
 
@@ -62,7 +72,7 @@ Item {
       rows.push({
         icon: "󰒃",
         label: list[i].name,
-        detail: list[i].description,
+        detail: root.tr(list[i].description_ru || list[i].description, list[i].description),
         checked: list[i].name === root.zapret.strategy,
         kind: "strategy",
         args: ["strategy", list[i].name]
@@ -71,7 +81,7 @@ Item {
     return rows
   }
 
-  // payload {"view":"strategy"} открывает окошко сразу на списке стратегий.
+  // Payload {"view":"strategy"} opens the window straight on the strategy list.
   function open(payloadJson) {
     var payload = ({})
     try { payload = JSON.parse(payloadJson || "{}") } catch (e) { payload = ({}) }
@@ -140,8 +150,8 @@ Item {
       Quickshell.execDetached([root.cli, "term"].concat(row.args))
       root.dismiss()
     } else {
-      // Окошко остаётся открытым: после команды перечитываем состояние,
-      // чтобы галочки показывали то, что получилось на самом деле.
+      // The window stays open: re-read the state after the command so the
+      // check marks show what actually happened.
       root.busy = true
       actionProc.returnToMain = row.kind === "strategy"
       actionProc.command = [root.cli].concat(row.args)
@@ -243,8 +253,8 @@ Item {
         anchors.leftMargin: card.contentLeftInset
         spacing: root.contentSpacing
 
-        // Логотип: тот же текст, что показывается в терминале, но нарисованный
-        // прямоугольниками — шрифтом блочные символы выходят со щелями.
+        // Logo: the same text the terminal shows, but drawn as rectangles,
+        // because block characters rendered as a font come out with gaps.
         Canvas {
           id: logoText
           readonly property var lines: (root.zapret.logo || "").replace(/\n+$/, "").split("\n")
@@ -269,8 +279,8 @@ Item {
             ctx.reset()
             ctx.fillStyle = ink
             var top = Style.space(8)
-            // Все клетки идут в один контур и заливаются разом: если заливать
-            // их по одной, при дробном масштабе экрана между ними видны швы.
+            // All cells go into one path and are filled at once: filled one by
+            // one they show seams between them at fractional display scales.
             ctx.beginPath()
             for (var y = 0; y < lines.length; y++) {
               for (var x = 0; x < lines[y].length; x++) {
@@ -289,7 +299,7 @@ Item {
           width: parent.width
           horizontalAlignment: Text.AlignHCenter
           visible: root.view === "strategy"
-          text: "Стратегия…"
+          text: root.tr("Стратегия…", "Strategy…")
           color: root.foreground
           opacity: 0.58
           font.family: root.fontFamily
@@ -366,7 +376,7 @@ Item {
               }
             }
 
-            // Текущее значение пункта (например, выбранная стратегия).
+            // Current value of the row (the selected strategy, for example).
             Text {
               id: valueText
               textFormat: Text.PlainText

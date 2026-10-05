@@ -1,2 +1,3 @@
-# Фейк + обратный порядок, TTL
+# Fake + reverse-order split, TTL
+# ru: Фейк + обратный порядок, TTL
 --dpi-desync=fake,multidisorder --dpi-desync-split-pos=1,midsld --dpi-desync-repeats=6 --dpi-desync-autottl=2

@@ -4,7 +4,7 @@
   "name": "Zapret",
   "version": "1.0.0",
   "author": "gnome627",
-  "description": "Окошко управления zapret: включение, автозапуск, стратегии, проверка доменов",
+  "description": "Zapret control window: on/off, autostart, strategies, host check",
   "kinds": [
     "overlay"
   ],

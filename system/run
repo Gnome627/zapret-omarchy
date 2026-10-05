@@ -1,5 +1,5 @@
 #!/bin/bash
-# Запускает nfqws с выбранной стратегией. Вызывается из zapret-toggle@.service.
+# Runs nfqws with the chosen strategy. Called from zapret-toggle@.service.
 set -euo pipefail
 
 name=${1:?strategy name required}

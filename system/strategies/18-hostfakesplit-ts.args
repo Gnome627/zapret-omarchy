@@ -1,2 +1,3 @@
-# Подмена только имени хоста, timestamp
+# Fake only the host name, timestamp
+# ru: Подмена только имени хоста, timestamp
 --dpi-desync=hostfakesplit --dpi-desync-hostfakesplit-mod=host=www.google.com,altorder=1 --dpi-desync-repeats=4 --dpi-desync-fooling=ts

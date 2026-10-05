@@ -1,2 +1,3 @@
-# Фейк + fakeddisorder, timestamp
+# Fake + fakeddisorder, timestamp
+# ru: Фейк + fakeddisorder, timestamp
 --dpi-desync=fake,fakeddisorder --dpi-desync-split-pos=midsld --dpi-desync-repeats=6 --dpi-desync-fooling=ts

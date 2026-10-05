@@ -1,2 +1,3 @@
-# Разрез в обратном порядке, без фейков
+# Reverse-order split, no fakes
+# ru: Разрез в обратном порядке, без фейков
 --dpi-desync=multidisorder --dpi-desync-split-pos=1,midsld

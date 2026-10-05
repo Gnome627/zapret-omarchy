@@ -1,8 +1,8 @@
 #!/bin/bash
-# Обёртка над zapret (nfqws): обход DPI для Discord и YouTube.
-# В Omarchy окошко управления открывается по Super+Z (плагин gnome627.zapret);
-# в остальных системах всё делается этими же командами из терминала.
-# Системная часть: zapret-toggle@<стратегия>.service, конфиги в /etc/zapret-toggle/.
+# Wrapper around zapret (nfqws): DPI bypass for Discord and YouTube.
+# On Omarchy the control window opens with Super+Z (plugin gnome627.zapret);
+# everywhere else the same commands are used from a terminal.
+# System side: zapret-toggle@<strategy>.service, configs in /etc/zapret-toggle/.
 
 set -u
 
@@ -16,20 +16,20 @@ PLUGIN_ID=gnome627.zapret
 
 HOSTS_FILE=/etc/zapret-toggle/hosts.txt
 
-# Секунд на один запрос. С рабочей стратегией ответ приходит за доли секунды,
-# а заблокированное соединение просто висит, так что ждать дольше нет смысла.
+# Seconds per request. With a working strategy the reply comes in a fraction
+# of a second, and a blocked connection just hangs, so waiting longer is pointless.
 PROBE_TIMEOUT=3
 
-# Сколько адресов из списка опрашивать самое большее. Если в списке больше,
-# берётся равномерная выборка: автоподбор не должен растягиваться на минуты.
+# Upper limit on how many hosts from the list get probed. A longer list is
+# sampled evenly: autopick must not stretch into minutes.
 PROBE_MAX_HOSTS=60
 
-# По этим адресам проверка отличает блокировку от пропавшего интернета.
+# These hosts let the check tell blocking apart from a dead connection.
 CONTROL_HOSTS=(github.com www.google.com)
 
 notify() {
   command -v notify-send >/dev/null || return 0
-  # Заменяем предыдущее уведомление, а не копим стопку.
+  # Replace the previous notification instead of stacking them.
   local idfile=${XDG_RUNTIME_DIR:-/tmp}/zapret-toggle.notify id=0
   [[ -r $idfile ]] && id=$(<"$idfile")
   notify-send -a Zapret -t 2500 -p -r "${id:-0}" "$1" "${2:-}" >"$idfile" 2>/dev/null
@@ -42,8 +42,14 @@ strategies() {
   done
 }
 
+# The first line of a strategy file is its English description; an optional
+# "# ru: ..." line carries the Russian one for the control window.
 describe() {
   sed -n '1s/^# *//p' "$STRATEGY_DIR/$1.args"
+}
+
+describe_ru() {
+  sed -n 's/^# ru: *//p' "$STRATEGY_DIR/$1.args" | head -n1
 }
 
 current_strategy() {
@@ -67,8 +73,8 @@ active_strategy() {
   active_units | head -n1 | sed -E 's/^zapret-toggle@(.*)\.service$/\1/'
 }
 
-# Запуск и остановка сервиса. В локальной графической сессии это разрешает
-# правило polkit; там, где оно не действует (SSH, старый polkit), идём через sudo.
+# Starting and stopping the service. In a local graphical session the polkit
+# rule allows it; where the rule does not apply (SSH, old polkit) fall back to sudo.
 service() {
   if ((EUID == 0)); then
     systemctl "$@"
@@ -91,13 +97,13 @@ start() {
   systemctl is-active --quiet "zapret-toggle@$1.service"
 }
 
-# Домены из списка — единственный источник адресов и для nfqws, и для проверок.
+# The hostlist is the single source of hosts for both nfqws and the probes.
 hosts() {
   grep -vE '^[[:space:]]*([#;/]|$)' "$HOSTS_FILE" 2>/dev/null |
     tr -d ' \t\r' | tr '[:upper:]' '[:lower:]' | awk '!seen[$0]++'
 }
 
-# Не больше PROBE_MAX_HOSTS адресов, равномерно по всему списку.
+# At most PROBE_MAX_HOSTS hosts, spread evenly over the whole list.
 sample_hosts() {
   hosts | awk -v max="$PROBE_MAX_HOSTS" '
     { line[NR] = $0 }
@@ -107,8 +113,8 @@ sample_hosts() {
     }'
 }
 
-# Опрашивает все адреса одновременно; в каталог $1 кладёт по файлу на адрес
-# с "<код HTTP> <секунды> <код выхода curl>".
+# Probes all hosts at once; writes one file per host into directory $1
+# holding "<HTTP code> <seconds> <curl exit code>".
 probe_all() {
   local dir=$1 i=0 host
   shift
@@ -120,8 +126,8 @@ probe_all() {
   wait
 }
 
-# То же, но немногие неответившие адреса опрашивает ещё раз: у домена
-# бывает один нерабочий адрес из нескольких, и это не вина стратегии.
+# Same, but the few hosts that did not answer are probed once more: a domain
+# may have one dead address among several, which is not the strategy's fault.
 probe_retry() {
   local dir=$1 i code exit again=() index=()
   shift
@@ -142,12 +148,12 @@ probe_retry() {
   rmdir "$dir/retry"
 }
 
-# Что значит ответ на запрос:
-#   ok      сервер ответил, блокировка обойдена
-#   noaddr  у домена нет адреса (это суффикс вроде ytimg.com, а не сайт)
-#   cert    соединение прошло, но сертификат чужой: это либо не сайт,
-#           либо DNS подменяет адрес. От стратегии не зависит.
-#   fail    ответа нет: заблокировано
+# What a probe result means:
+#   ok      the server answered, the block is bypassed
+#   noaddr  the domain has no address (a suffix like ytimg.com, not a site)
+#   cert    the connection went through but the certificate is for another
+#           name: either not a site, or DNS is spoofed. Not strategy-related.
+#   fail    no answer: blocked
 verdict() {
   local code=${1:-000} exit=${2:-28}
   if [[ $code != 000 ]]; then
@@ -166,10 +172,10 @@ cmd_on() {
   local s=${1:-}
   [[ -n $s ]] || s=$(current_strategy)
   if start "$s"; then
-    notify "Zapret включён" "Стратегия: $s"
+    notify "Zapret enabled" "Strategy: $s"
     echo "on ($s)"
   else
-    notify "Zapret: ошибка запуска" "journalctl -u zapret-toggle@$s"
+    notify "Zapret failed to start" "journalctl -u zapret-toggle@$s"
     echo "failed to start zapret-toggle@$s" >&2
     return 1
   fi
@@ -177,10 +183,10 @@ cmd_on() {
 
 cmd_off() {
   if stop_all; then
-    notify "Zapret выключен"
+    notify "Zapret disabled"
     echo "off"
   else
-    notify "Zapret: не удалось остановить"
+    notify "Zapret failed to stop"
     return 1
   fi
 }
@@ -191,7 +197,7 @@ cmd_status() {
   if [[ -n $a ]]; then
     echo "on ($a)"
   else
-    echo "off (выбрана стратегия: $(current_strategy))"
+    echo "off (selected strategy: $(current_strategy))"
   fi
 }
 
@@ -210,27 +216,27 @@ cmd_strategy() {
     return
   fi
   if [[ ! -r $STRATEGY_DIR/$s.args ]]; then
-    # Разрешаем указывать только номер: "zapret-toggle strategy 8"
+    # The number alone is enough: "zapret-toggle strategy 8"
     s=$(strategies | grep -m1 -E "^0*$1-" || true)
-    [[ -n $s ]] || { echo "нет такой стратегии: $1" >&2; return 1; }
+    [[ -n $s ]] || { echo "no such strategy: $1" >&2; return 1; }
   fi
   save_strategy "$s"
   [[ -n $(active_strategy) ]] && { cmd_on "$s"; return; }
-  echo "выбрана стратегия: $s"
+  echo "selected strategy: $s"
 }
 
-# Автозапуск — это флаг-файл: при входе в сессию Hyprland вызывает
-# "zapret-toggle autostart run", и zapret включается, если флаг стоит.
+# Autostart is a flag file: on login the session runs
+# "zapret-toggle autostart run", which enables zapret if the flag is set.
 cmd_autostart() {
   case ${1:-status} in
     status) [[ -e $AUTOSTART_FILE ]] ;;
     on)
       mkdir -p "$STATE_DIR" && touch "$AUTOSTART_FILE"
-      notify "Zapret: автозапуск включён"
+      notify "Zapret autostart enabled"
       ;;
     off)
       rm -f "$AUTOSTART_FILE"
-      notify "Zapret: автозапуск выключен"
+      notify "Zapret autostart disabled"
       ;;
     toggle) if [[ -e $AUTOSTART_FILE ]]; then cmd_autostart off; else cmd_autostart on; fi ;;
     run) [[ -e $AUTOSTART_FILE ]] && start "$(current_strategy)" ;;
@@ -238,7 +244,7 @@ cmd_autostart() {
   esac
 }
 
-# Правка списка доменов (нужен пароль sudo) с перезапуском, если zapret включён.
+# Edit the hostlist (needs the sudo password) and restart zapret if it is on.
 cmd_hosts() {
   sudoedit "$HOSTS_FILE" || return 1
   local a
@@ -246,32 +252,32 @@ cmd_hosts() {
   [[ -z $a ]] || cmd_on "$a"
 }
 
-# Перебирает стратегии и оставляет включённой первую, с которой открываются
-# все домены из списка. Домены без адреса и с чужим сертификатом не учитываются:
-# на них стратегия не влияет. С --all проходит весь список стратегий.
+# Tries the strategies and keeps the first one that opens every host in the
+# list. Hosts without an address or with a foreign certificate do not count:
+# no strategy affects them. With --all the whole strategy list is tried.
 cmd_test() {
   local all=0 s i ok fail best="" best_ok=-1 best_fail=0 best_failed="" failed tmp code exit list total
   [[ ${1:-} == --all ]] && all=1
   mapfile -t list < <(sample_hosts)
   total=${#list[@]}
-  ((total > 0)) || { echo "Список доменов пуст: $HOSTS_FILE" >&2; return 1; }
+  ((total > 0)) || { echo "The hostlist is empty: $HOSTS_FILE" >&2; return 1; }
   tmp=$(mktemp -d)
 
-  # Если перебор прервали (закрыли терминал, Ctrl+C), возвращаем то, что было,
-  # а не оставляем включённой стратегию, на которой остановились.
+  # If the run is interrupted (terminal closed, Ctrl+C) restore what was
+  # there before instead of leaving the strategy being tried switched on.
   local was_on
   was_on=$(active_strategy)
   trap 'rm -rf "$tmp"; if [[ -n $was_on ]]; then start "$was_on"; else stop_all; fi; exit 130' INT TERM HUP
 
-  printf 'Проверяю %d стратегий на %d доменах из списка (до %d с на стратегию)\n' \
+  printf 'Trying %d strategies on %d hosts from the list (up to %d s per strategy)\n' \
     "$(strategies | wc -l)" "$total" "$PROBE_TIMEOUT"
-  (($(hosts | wc -l) > total)) && printf 'В списке доменов больше, взята выборка из %d.\n' "$total"
+  (($(hosts | wc -l) > total)) && printf 'The hostlist is longer; a sample of %d is used.\n' "$total"
   echo
 
   for s in $(strategies); do
     printf '  %-30s ' "$s"
     if ! start "$s"; then
-      echo "не запустилась"
+      echo "failed to start"
       continue
     fi
     probe_retry "$tmp" "${list[@]}"
@@ -308,18 +314,18 @@ cmd_test() {
 
   if ((best_ok <= 0)); then
     if [[ -n $was_on ]]; then start "$was_on"; else stop_all; fi
-    echo "Ни одна стратегия не сработала."
-    notify "Zapret: ни одна стратегия не сработала"
+    echo "No strategy worked."
+    notify "Zapret: no strategy worked"
     return 1
   fi
   save_strategy "$best"
   cmd_on "$best" >/dev/null
-  echo "Выбрана: $best ($best_ok/$((best_ok + best_fail)))"
-  ((best_fail == 0)) || echo "Не открылись:$best_failed"
+  echo "Selected: $best ($best_ok/$((best_ok + best_fail)))"
+  ((best_fail == 0)) || echo "Still unreachable:$best_failed"
 }
 
-# Домен отвечает чужим сертификатом. Если по адресу от публичного DNS он
-# открывается нормально, значит системный DNS отдаёт подменённый адрес.
+# The host answers with a foreign certificate. If it opens fine at the
+# address a public DNS returns, the system DNS is handing out a spoofed one.
 dns_spoofed() {
   local real
   real=$(curl -s -m 5 -H 'accept: application/dns-json' \
@@ -330,15 +336,15 @@ dns_spoofed() {
       -w '%{http_code}' "https://$1" 2>/dev/null) != 000 ]]
 }
 
-# Проходит по всем доменам из списка и показывает, какие сейчас открываются.
+# Goes through every host in the list and shows which ones open right now.
 cmd_check() {
-  local tmp i f code secs exit host mark note ok=0 fail=0 skip=0 spoof=0 net="нет" list cells=() half
+  local tmp i f code secs exit host mark note ok=0 fail=0 skip=0 spoof=0 net="down" list cells=() half
   mapfile -t list < <(hosts)
   tmp=$(mktemp -d)
   mkdir "$tmp/control" "$tmp/hosts"
 
   probe_all "$tmp/control" "${CONTROL_HOSTS[@]}" &
-  # Пачками, чтобы длинный список не запускал сотни запросов разом.
+  # In batches, so a long list does not fire hundreds of requests at once.
   for ((i = 0; i < ${#list[@]}; i += PROBE_MAX_HOSTS)); do
     mkdir "$tmp/batch"
     probe_retry "$tmp/batch" "${list[@]:i:PROBE_MAX_HOSTS}"
@@ -349,9 +355,9 @@ cmd_check() {
 
   for ((i = 0; i < ${#CONTROL_HOSTS[@]}; i++)); do
     read -r code _ <"$tmp/control/$i"
-    [[ ${code:-000} == 000 ]] || net="есть"
+    [[ ${code:-000} == 000 ]] || net="up"
   done
-  printf 'Zapret: %s · интернет: %s\n\n' "$(cmd_status)" "$net"
+  printf 'Zapret: %s · internet: %s\n\n' "$(cmd_status)" "$net"
 
   for ((i = 0; i < ${#list[@]}; i++)); do
     host=${list[i]}
@@ -360,57 +366,57 @@ cmd_check() {
       ok)
         ok=$((ok + 1))
         mark='\033[32m●\033[0m'
-        note=$(awk -v s="$secs" 'BEGIN { printf "%d мс", s * 1000 }')
+        note=$(awk -v s="$secs" 'BEGIN { printf "%d ms", s * 1000 }')
         ;;
-      fail)
-        fail=$((fail + 1))
-        mark='\033[31m○\033[0m'
-        note="нет ответа"
+      fail | cert)
+        # Either way the address may be a spoofed one; a strategy cannot fix that.
+        if dns_spoofed "$host"; then
+          spoof=$((spoof + 1))
+          mark='\033[33m◍\033[0m'
+          note="DNS spoofed"
+        elif [[ $(verdict "$code" "$exit") == fail ]]; then
+          fail=$((fail + 1))
+          mark='\033[31m○\033[0m'
+          note="no reply"
+        else
+          skip=$((skip + 1))
+          mark='\033[2m·\033[0m'
+          note="not a site"
+        fi
         ;;
       noaddr)
         skip=$((skip + 1))
         mark='\033[2m·\033[0m'
-        note="нет адреса"
-        ;;
-      cert)
-        if dns_spoofed "$host"; then
-          spoof=$((spoof + 1))
-          mark='\033[33m◍\033[0m'
-          note="подмена DNS"
-        else
-          skip=$((skip + 1))
-          mark='\033[2m·\033[0m'
-          note="не сайт"
-        fi
+        note="no address"
         ;;
     esac
     ((${#host} <= 30)) || host=${host:0:29}…
-    # Ширину добиваем пробелами вручную: printf считает её в байтах.
+    # Pad by hand: printf counts width in bytes, and the ellipsis is multibyte.
     cells+=("$(printf '%b %s%*s %s%*s' "$mark" "$host" $((30 - ${#host})) '' "$note" $((12 - ${#note})) '')")
   done
   rm -rf "$tmp"
 
-  # Две колонки, чтобы список помещался в окно терминала.
+  # Two columns, so the list fits in the terminal window.
   half=$(((${#cells[@]} + 1) / 2))
   for ((i = 0; i < half; i++)); do
     printf '  %s  %s\n' "${cells[i]}" "${cells[i + half]:-}"
   done
 
-  printf '\nОткрывается %d из %d.' "$ok" "$((ok + fail + spoof))"
-  ((spoof == 0)) || printf ' Подмена DNS: %d — zapret тут не поможет, нужен другой DNS.' "$spoof"
-  ((skip == 0)) || printf ' Не проверяется: %d.' "$skip"
+  printf '\nReachable: %d of %d.' "$ok" "$((ok + fail + spoof))"
+  ((spoof == 0)) || printf ' DNS spoofed: %d (zapret cannot fix that, switch to another DNS).' "$spoof"
+  ((skip == 0)) || printf ' Not checked: %d.' "$skip"
   echo
   ((fail == 0 && spoof == 0))
 }
 
 
-# Состояние для окошка, одним JSON.
+# State for the control window, as one JSON object.
 cmd_state() {
   local s cur active list
   cur=$(current_strategy)
   active=$(active_strategy)
-  list=$(for s in $(strategies); do printf '%s\t%s\n' "$s" "$(describe "$s")"; done |
-    jq -Rn '[inputs | split("\t") | {name: .[0], description: .[1]}]')
+  list=$(for s in $(strategies); do printf '%s\t%s\t%s\n' "$s" "$(describe "$s")" "$(describe_ru "$s")"; done |
+    jq -Rn '[inputs | split("\t") | {name: .[0], description: .[1], description_ru: .[2]}]')
   jq -n --arg active "$active" --arg strategy "$cur" --rawfile logo "$LOGO_FILE" \
     --argjson autostart "$([[ -e $AUTOSTART_FILE ]] && echo true || echo false)" \
     --argjson strategies "$list" \
@@ -418,8 +424,8 @@ cmd_state() {
       autostart: $autostart, strategies: $strategies, logo: $logo}'
 }
 
-# Открывает окошко. Оно есть только в Omarchy; в остальных системах
-# показываем состояние и список команд.
+# Opens the control window. It exists only on Omarchy; elsewhere print the
+# status and the command list.
 cmd_menu() {
   if command -v omarchy-shell >/dev/null; then
     exec omarchy-shell shell toggle "$PLUGIN_ID" '{}'
@@ -429,8 +435,8 @@ cmd_menu() {
   "$SELF" help
 }
 
-# Запускает подкоманду в плавающем терминале Omarchy с логотипом zapret.
-# Без Omarchy выполняет её прямо здесь.
+# Runs a subcommand in an Omarchy floating terminal under the zapret logo.
+# Without Omarchy it runs right here.
 cmd_term() {
   command -v omarchy-shell >/dev/null || exec "$SELF" present "$@"
   exec setsid uwsm-app -- xdg-terminal-exec --app-id=org.omarchy.terminal --title=Zapret \
@@ -467,18 +473,18 @@ case ${1:-menu} in
   present) cmd_present "${@:2}" ;;
   *)
     cat <<USAGE
-Использование: zapret-toggle [команда]
-  menu             открыть/закрыть окошко (по умолчанию; в Omarchy это Super+Z)
-  toggle           включить/выключить
-  on | off         включить / выключить
-  status           текущее состояние
-  check            пройтись по списку доменов и показать, что открывается
-  list             список стратегий
-  strategy <имя>   выбрать стратегию (можно только номер)
-  test [--all]     перебрать стратегии на доменах из списка и выбрать рабочую
-  autostart <on|off|toggle|status>   автозапуск при входе в систему
-  hosts            править список доменов
-  term <команда>   выполнить команду в плавающем терминале
+Usage: zapret-toggle [command]
+  menu             open/close the control window (default; Super+Z on Omarchy)
+  toggle           turn the bypass on or off
+  on | off         turn it on / off
+  status           current state
+  check            go through the hostlist and show what is reachable
+  list             list strategies
+  strategy <name>  select a strategy (the number alone is enough)
+  test [--all]     try strategies on the hostlist and keep a working one
+  autostart <on|off|toggle|status>   start on login
+  hosts            edit the hostlist
+  term <command>   run a command in a floating terminal
 USAGE
     ;;
 esac

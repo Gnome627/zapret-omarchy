@@ -1,9 +1,9 @@
-# Домены, для которых работает обход. Один на строку; поддомены покрываются
-# автоматически (discord.com включает cdn.discord.com и т.д.).
+# Domains the bypass applies to. One per line; subdomains are covered
+# automatically (discord.com includes cdn.discord.com and so on).
 #
-# По этому же списку идут "Проверка" и "Автоподбор". Домен без своего сайта
-# (например ytimg.com) в проверках пропускается, поэтому рядом стоит полезно
-# держать и конкретный адрес, который реально открывается (i.ytimg.com).
+# "Check" and "Autopick" use this same list. A domain with no site of its own
+# (ytimg.com, for example) is skipped by the probes, so it helps to also keep
+# a concrete host that really opens next to it (i.ytimg.com).
 
 # Discord
 discord.com

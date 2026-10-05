@@ -1,2 +1,3 @@
-# Фейк с SNI google + разрез, md5sig
+# Fake with google SNI + split, md5sig
+# ru: Фейк с SNI google + разрез, md5sig
 --dpi-desync=fake,multisplit --dpi-desync-split-pos=1 --dpi-desync-repeats=8 --dpi-desync-fooling=md5sig --dpi-desync-fake-tls-mod=rnd,dupsid,sni=www.google.com

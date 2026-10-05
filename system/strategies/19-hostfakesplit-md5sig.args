@@ -1,2 +1,3 @@
-# Подмена только имени хоста, md5sig
+# Fake only the host name, md5sig
+# ru: Подмена только имени хоста, md5sig
 --dpi-desync=hostfakesplit --dpi-desync-hostfakesplit-mod=host=www.google.com --dpi-desync-repeats=4 --dpi-desync-fooling=md5sig

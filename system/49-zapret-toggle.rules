@@ -1,5 +1,5 @@
-// Разрешает пользователю @USER@ запускать и останавливать zapret-toggle@*.service
-// без пароля (нужно для переключения по Super+Z).
+// Lets user @USER@ start and stop zapret-toggle@*.service without a password
+// (needed for switching from the Super+Z window).
 polkit.addRule(function(action, subject) {
     if (action.id != "org.freedesktop.systemd1.manage-units") return;
     if (subject.user != "@USER@" || !subject.local || !subject.active) return;
