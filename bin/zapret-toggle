@@ -1,6 +1,7 @@
 #!/bin/bash
 # Обёртка над zapret (nfqws): обход DPI для Discord и YouTube.
-# Окошко управления открывается по Super+Z (плагин gnome627.zapret).
+# В Omarchy окошко управления открывается по Super+Z (плагин gnome627.zapret);
+# в остальных системах всё делается этими же командами из терминала.
 # Системная часть: zapret-toggle@<стратегия>.service, конфиги в /etc/zapret-toggle/.
 
 set -u
@@ -66,16 +67,26 @@ active_strategy() {
   active_units | head -n1 | sed -E 's/^zapret-toggle@(.*)\.service$/\1/'
 }
 
+# Запуск и остановка сервиса. В локальной графической сессии это разрешает
+# правило polkit; там, где оно не действует (SSH, старый polkit), идём через sudo.
+service() {
+  if ((EUID == 0)); then
+    systemctl "$@"
+  else
+    systemctl --no-ask-password "$@" 2>/dev/null || sudo systemctl "$@"
+  fi
+}
+
 stop_all() {
   local u
   for u in $(active_units); do
-    systemctl stop "$u" || return 1
+    service stop "$u" || return 1
   done
 }
 
 start() {
   stop_all || return 1
-  systemctl start "zapret-toggle@$1.service" || return 1
+  service start "zapret-toggle@$1.service" || return 1
   sleep 0.2
   systemctl is-active --quiet "zapret-toggle@$1.service"
 }
@@ -407,8 +418,21 @@ cmd_state() {
       autostart: $autostart, strategies: $strategies, logo: $logo}'
 }
 
+# Открывает окошко. Оно есть только в Omarchy; в остальных системах
+# показываем состояние и список команд.
+cmd_menu() {
+  if command -v omarchy-shell >/dev/null; then
+    exec omarchy-shell shell toggle "$PLUGIN_ID" '{}'
+  fi
+  cmd_status
+  echo
+  "$SELF" help
+}
+
 # Запускает подкоманду в плавающем терминале Omarchy с логотипом zapret.
+# Без Omarchy выполняет её прямо здесь.
 cmd_term() {
+  command -v omarchy-shell >/dev/null || exec "$SELF" present "$@"
   exec setsid uwsm-app -- xdg-terminal-exec --app-id=org.omarchy.terminal --title=Zapret \
     -e "$SELF" present "$@"
 }
@@ -419,11 +443,13 @@ cmd_present() {
   sed 's/^/  /' "$LOGO_FILE"
   printf '\033[0m\n'
   "$SELF" "$@"
-  (($? == 130)) || omarchy-show-done
+  local rc=$?
+  ((rc == 130)) || ! command -v omarchy-show-done >/dev/null || omarchy-show-done
+  return "$rc"
 }
 
 case ${1:-menu} in
-  menu) exec omarchy-shell shell toggle "$PLUGIN_ID" '{}' ;;
+  menu) cmd_menu ;;
   toggle) if [[ -n $(active_strategy) ]]; then cmd_off; else cmd_on; fi ;;
   on) cmd_on "${2:-}" ;;
   off) cmd_off ;;
@@ -442,7 +468,7 @@ case ${1:-menu} in
   *)
     cat <<USAGE
 Использование: zapret-toggle [команда]
-  menu             открыть/закрыть окошко (по умолчанию, Super+Z)
+  menu             открыть/закрыть окошко (по умолчанию; в Omarchy это Super+Z)
   toggle           включить/выключить
   on | off         включить / выключить
   status           текущее состояние

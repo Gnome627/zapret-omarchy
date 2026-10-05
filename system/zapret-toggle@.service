@@ -4,8 +4,8 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStartPre=/usr/bin/nft -f /etc/zapret-toggle/rules.nft
+ExecStartPre=nft -f /etc/zapret-toggle/rules.nft
 ExecStart=/usr/local/lib/zapret-toggle/run %i
-ExecStopPost=-/usr/bin/nft delete table inet zapret_toggle
+ExecStopPost=-nft delete table inet zapret_toggle
 Restart=on-failure
 RestartSec=2

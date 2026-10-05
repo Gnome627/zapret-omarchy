@@ -9,9 +9,11 @@
 ▀████████▀   ███   █▀    ███         ███   ███   ████████▀      █▀
 ```
 
-# zapret для Omarchy: Discord и YouTube без VPN
+# zapret для Omarchy, Arch и Ubuntu: Discord и YouTube без VPN
 
 Там, где провайдер блокирует Discord и YouTube через DPI, этот репозиторий ставит [zapret](https://github.com/bol-van/zapret) и добавляет к нему окошко управления в стиле меню Omarchy по Super+Z.
+
+Работает на Omarchy, обычном Arch и Debian/Ubuntu. Окошко есть только в Omarchy; в остальных системах то же самое делается командой `zapret-toggle` из терминала.
 
 ## Установка
 
@@ -23,9 +25,11 @@ cd zapret-omarchy
 
 Запускать от обычного пользователя, пароль `sudo` скрипт спросит сам. Повторный запуск безопасен. В конце скрипт сам подберёт рабочую стратегию и включит zapret.
 
+На Arch zapret ставится из AUR (нужен `yay`), на Debian и Ubuntu собирается из исходников: в их репозиториях его нет.
+
 ## Что получится
 
-Super+Z открывает окошко, повторное нажатие или Esc закрывает его. В нём:
+В Omarchy Super+Z открывает окошко, повторное нажатие или Esc закрывает его. В нём:
 
 - **Включён** — включить или выключить обход.
 - **Автозапуск** — включать zapret при входе в систему.
@@ -46,7 +50,7 @@ Super+Z открывает окошко, повторное нажатие ил�
 
 Если проверка пишет «DNS подменяет адрес», zapret тут не поможет: DNS-сервер отдаёт для домена чужой адрес. Лечится сменой DNS, например через меню Omarchy: Setup → Network → DNS.
 
-Всё то же доступно из терминала:
+Всё то же доступно из терминала в любой системе:
 
 ```sh
 zapret-toggle toggle        # включить/выключить
@@ -56,13 +60,19 @@ zapret-toggle test          # автоподбор, остановится на 
 zapret-toggle test --all    # прогнать все стратегии
 zapret-toggle strategy 8    # выбрать стратегию по номеру
 zapret-toggle list          # список стратегий
+zapret-toggle autostart on  # автозапуск
+zapret-toggle hosts         # править список доменов
 ```
+
+Вне Omarchy автозапуск нужно подключить самому: добавьте в автозагрузку своей среды команду `zapret-toggle autostart run`.
+
+Включение и выключение без пароля разрешает правило polkit, и действует оно только в локальной графической сессии. По SSH и на системах со старым polkit (Ubuntu 22.04, Debian 11) `zapret-toggle` спросит пароль `sudo`.
 
 ## Что ставится
 
 | Что | Куда | Зачем |
 |---|---|---|
-| Пакет `zapret-git` из AUR | `/opt/zapret/` | Сам zapret: программа `nfqws` и файлы фейковых пакетов |
+| zapret: пакет `zapret-git` из AUR либо сборка из исходников | `/opt/zapret/` | Программа `nfqws` и файлы фейковых пакетов |
 | `strategies/*.args` | `/etc/zapret-toggle/strategies/` | Параметры `nfqws` для каждой стратегии |
 | `hosts.txt` | `/etc/zapret-toggle/` | Список доменов для обхода, проверки и автоподбора; при повторной установке не перезаписывается |
 | `rules.nft` | `/etc/zapret-toggle/` | Правила nftables: отправляют первые пакеты соединений в `nfqws` |
@@ -71,10 +81,10 @@ zapret-toggle list          # список стратегий
 | `49-zapret-toggle.rules` | `/etc/polkit-1/rules.d/` | Разрешает вашему пользователю запускать и останавливать только этот сервис без пароля |
 | `zapret-toggle` | `~/.local/bin/` | Вся логика: переключение, проверка, автоподбор |
 | `logo.txt` | `~/.local/share/zapret-toggle/` | Логотип для окошка и терминала |
-| Плагин `gnome627.zapret` | `~/.config/omarchy/plugins/` | Окошко по Super+Z |
-| Привязка `SUPER + Z` | `~/.config/hypr/bindings.lua` | Открывает окошко |
-| Строка автозапуска | `~/.config/hypr/autostart.lua` | Включает zapret при входе, если автозапуск включён |
-| Строка «Zapret» | `~/.config/omarchy/extensions/omarchy-menu.jsonc` | Пункт в общем меню Omarchy |
+| Плагин `gnome627.zapret` | `~/.config/omarchy/plugins/` | Окошко по Super+Z (только Omarchy) |
+| Привязка `SUPER + Z` | `~/.config/hypr/bindings.lua` | Открывает окошко (только Omarchy) |
+| Строка автозапуска | `~/.config/hypr/autostart.lua` | Включает zapret при входе, если автозапуск включён (только Omarchy) |
+| Строка «Zapret» | `~/.config/omarchy/extensions/omarchy-menu.jsonc` | Пункт в общем меню Omarchy (только Omarchy) |
 
 ## Как это устроено
 
@@ -92,4 +102,4 @@ zapret-toggle list          # список стратегий
 ./uninstall.sh
 ```
 
-Убирает всё из таблицы, кроме пакета `zapret-git`: его можно удалить через `sudo pacman -Rns zapret-git`.
+Убирает всё из таблицы. На Arch остаётся пакет `zapret-git`: его можно удалить через `sudo pacman -Rns zapret-git`. На Debian и Ubuntu собранный zapret удаляется вместе с остальным.
