@@ -1,4 +1,13 @@
+# Домены, для которых работает обход. Один на строку; поддомены покрываются
+# автоматически (discord.com включает cdn.discord.com и т.д.).
+#
+# По этому же списку идут "Проверка" и "Автоподбор". Домен без своего сайта
+# (например ytimg.com) в проверках пропускается, поэтому рядом стоит полезно
+# держать и конкретный адрес, который реально открывается (i.ytimg.com).
+
+# Discord
 discord.com
+gateway.discord.gg
 discord.gg
 discord.media
 discord.dev
@@ -8,29 +17,33 @@ discord.gifts
 discord.co
 discord.store
 discord.design
-discord.tools
 discordapp.com
+cdn.discordapp.com
 discordapp.net
+media.discordapp.net
 discordcdn.com
 discordstatus.com
 discordactivities.com
 discordsays.com
 dis.gd
 discord-attachments-uploads-prd.storage.googleapis.com
+
+# YouTube
 youtube.com
+www.youtube.com
 youtu.be
 yt.be
 youtube-nocookie.com
+www.youtube-nocookie.com
 youtubekids.com
 youtubeeducation.com
 googlevideo.com
+redirector.googlevideo.com
 ytimg.com
+i.ytimg.com
 ggpht.com
+yt3.ggpht.com
 youtubei.googleapis.com
 youtubeembeddedplayer.googleapis.com
 youtube.googleapis.com
 jnn-pa.googleapis.com
-wide-youtube.l.google.com
-youtube-ui.l.google.com
-ytimg.l.google.com
-yt-video-upload.l.google.com

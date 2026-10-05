@@ -13,38 +13,18 @@ AUTOSTART_FILE=$STATE_DIR/autostart
 LOGO_FILE=${XDG_DATA_HOME:-$HOME/.local/share}/zapret-toggle/logo.txt
 PLUGIN_ID=gnome627.zapret
 
+HOSTS_FILE=/etc/zapret-toggle/hosts.txt
+
 # Секунд на один запрос. С рабочей стратегией ответ приходит за доли секунды,
 # а заблокированное соединение просто висит, так что ждать дольше нет смысла.
 PROBE_TIMEOUT=3
 
-# По этим адресам автоподбор решает, работает ли стратегия.
-TEST_URLS=(
-  https://discord.com
-  https://gateway.discord.gg
-  https://www.youtube.com
-  https://i.ytimg.com/generate_204
-  https://redirector.googlevideo.com
-)
+# Сколько адресов из списка опрашивать самое большее. Если в списке больше,
+# берётся равномерная выборка: автоподбор не должен растягиваться на минуты.
+PROBE_MAX_HOSTS=60
 
-# Список для команды check: подпись и адрес.
-CHECK_HOSTS=(
-  "Discord|discord.com"
-  "Discord|gateway.discord.gg"
-  "Discord|cdn.discordapp.com"
-  "Discord|media.discordapp.net"
-  "Discord|discord.gg"
-  "Discord|status.discord.com"
-  "YouTube|www.youtube.com"
-  "YouTube|m.youtube.com"
-  "YouTube|youtu.be"
-  "YouTube|i.ytimg.com"
-  "YouTube|yt3.ggpht.com"
-  "YouTube|redirector.googlevideo.com"
-  "YouTube|youtubei.googleapis.com"
-  "YouTube|www.youtube-nocookie.com"
-  "Контроль|github.com"
-  "Контроль|www.google.com"
-)
+# По этим адресам проверка отличает блокировку от пропавшего интернета.
+CONTROL_HOSTS=(github.com www.google.com)
 
 notify() {
   command -v notify-send >/dev/null || return 0
@@ -100,18 +80,76 @@ start() {
   systemctl is-active --quiet "zapret-toggle@$1.service"
 }
 
+# Домены из списка — единственный источник адресов и для nfqws, и для проверок.
+hosts() {
+  grep -vE '^[[:space:]]*([#;/]|$)' "$HOSTS_FILE" 2>/dev/null |
+    tr -d ' \t\r' | tr '[:upper:]' '[:lower:]' | awk '!seen[$0]++'
+}
+
+# Не больше PROBE_MAX_HOSTS адресов, равномерно по всему списку.
+sample_hosts() {
+  hosts | awk -v max="$PROBE_MAX_HOSTS" '
+    { line[NR] = $0 }
+    END {
+      if (NR <= max) { for (i = 1; i <= NR; i++) print line[i]; exit }
+      for (i = 0; i < max; i++) print line[int(i * NR / max) + 1]
+    }'
+}
+
 # Опрашивает все адреса одновременно; в каталог $1 кладёт по файлу на адрес
-# с "<код> <секунды>". Код 000 значит, что TLS-рукопожатие не прошло.
+# с "<код HTTP> <секунды> <код выхода curl>".
 probe_all() {
-  local dir=$1 i=0 url
+  local dir=$1 i=0 host
   shift
-  for url in "$@"; do
+  for host in "$@"; do
     curl -4 -s -o /dev/null -m "$PROBE_TIMEOUT" --connect-timeout 2 \
-      -w '%{http_code} %{time_total}' "$url" >"$dir/$i" 2>/dev/null &
+      -w '%{http_code} %{time_total} %{exitcode}' "https://$host" >"$dir/$i" 2>/dev/null &
     i=$((i + 1))
   done
   wait
 }
+
+# То же, но немногие неответившие адреса опрашивает ещё раз: у домена
+# бывает один нерабочий адрес из нескольких, и это не вина стратегии.
+probe_retry() {
+  local dir=$1 i code exit again=() index=()
+  shift
+  probe_all "$dir" "$@"
+  for ((i = 0; i < $#; i++)); do
+    read -r code _ exit <"$dir/$i"
+    if [[ $(verdict "$code" "$exit") == fail ]]; then
+      index+=("$i")
+      again+=("${@:i+1:1}")
+    fi
+  done
+  ((${#again[@]} > 0 && ${#again[@]} <= 5)) || return 0
+  mkdir "$dir/retry"
+  probe_all "$dir/retry" "${again[@]}"
+  for ((i = 0; i < ${#index[@]}; i++)); do
+    mv "$dir/retry/$i" "$dir/${index[i]}"
+  done
+  rmdir "$dir/retry"
+}
+
+# Что значит ответ на запрос:
+#   ok      сервер ответил, блокировка обойдена
+#   noaddr  у домена нет адреса (это суффикс вроде ytimg.com, а не сайт)
+#   cert    соединение прошло, но сертификат чужой: это либо не сайт,
+#           либо DNS подменяет адрес. От стратегии не зависит.
+#   fail    ответа нет: заблокировано
+verdict() {
+  local code=${1:-000} exit=${2:-28}
+  if [[ $code != 000 ]]; then
+    echo ok
+  elif [[ $exit == 6 ]]; then
+    echo noaddr
+  elif [[ $exit == 60 || $exit == 51 ]]; then
+    echo cert
+  else
+    echo fail
+  fi
+}
+
 
 cmd_on() {
   local s=${1:-}
@@ -191,17 +229,21 @@ cmd_autostart() {
 
 # Правка списка доменов (нужен пароль sudo) с перезапуском, если zapret включён.
 cmd_hosts() {
-  sudoedit /etc/zapret-toggle/hosts.txt || return 1
+  sudoedit "$HOSTS_FILE" || return 1
   local a
   a=$(active_strategy)
   [[ -z $a ]] || cmd_on "$a"
 }
 
-# Перебирает стратегии и оставляет включённой первую, с которой открывается всё.
-# С --all проходит весь список и показывает результат каждой.
+# Перебирает стратегии и оставляет включённой первую, с которой открываются
+# все домены из списка. Домены без адреса и с чужим сертификатом не учитываются:
+# на них стратегия не влияет. С --all проходит весь список стратегий.
 cmd_test() {
-  local all=0 s i ok total=${#TEST_URLS[@]} best="" best_ok=-1 tmp code
+  local all=0 s i ok fail best="" best_ok=-1 best_fail=0 best_failed="" failed tmp code exit list total
   [[ ${1:-} == --all ]] && all=1
+  mapfile -t list < <(sample_hosts)
+  total=${#list[@]}
+  ((total > 0)) || { echo "Список доменов пуст: $HOSTS_FILE" >&2; return 1; }
   tmp=$(mktemp -d)
 
   # Если перебор прервали (закрыли терминал, Ctrl+C), возвращаем то, что было,
@@ -210,100 +252,146 @@ cmd_test() {
   was_on=$(active_strategy)
   trap 'rm -rf "$tmp"; if [[ -n $was_on ]]; then start "$was_on"; else stop_all; fi; exit 130' INT TERM HUP
 
-  printf 'Проверяю %d стратегий на %d адресах (до %d с на стратегию)\n\n' \
+  printf 'Проверяю %d стратегий на %d доменах из списка (до %d с на стратегию)\n' \
     "$(strategies | wc -l)" "$total" "$PROBE_TIMEOUT"
+  (($(hosts | wc -l) > total)) && printf 'В списке доменов больше, взята выборка из %d.\n' "$total"
+  echo
 
   for s in $(strategies); do
-    printf '  %-32s ' "$s"
+    printf '  %-30s ' "$s"
     if ! start "$s"; then
       echo "не запустилась"
       continue
     fi
-    probe_all "$tmp" "${TEST_URLS[@]}"
+    probe_retry "$tmp" "${list[@]}"
     ok=0
+    fail=0
+    failed=""
     for ((i = 0; i < total; i++)); do
-      read -r code _ <"$tmp/$i"
-      if [[ ${code:-000} != 000 ]]; then
-        ok=$((ok + 1))
-        printf '\033[32m●\033[0m'
-      else
-        printf '\033[31m○\033[0m'
-      fi
+      read -r code _ exit <"$tmp/$i"
+      case $(verdict "$code" "$exit") in
+        ok)
+          ok=$((ok + 1))
+          printf '\033[32m●\033[0m'
+          ;;
+        fail)
+          fail=$((fail + 1))
+          failed+=" ${list[i]}"
+          printf '\033[31m○\033[0m'
+          ;;
+        *) printf '\033[2m·\033[0m' ;;
+      esac
     done
-    echo " $ok/$total"
+    echo " $ok/$((ok + fail))"
     if ((ok > best_ok)); then
       best=$s
       best_ok=$ok
+      best_fail=$fail
+      best_failed=$failed
     fi
-    ((ok == total && !all)) && break
+    ((ok > 0 && fail == 0 && !all)) && break
   done
   rm -rf "$tmp"
   trap - INT TERM HUP
   echo
 
   if ((best_ok <= 0)); then
-    stop_all
+    if [[ -n $was_on ]]; then start "$was_on"; else stop_all; fi
     echo "Ни одна стратегия не сработала."
     notify "Zapret: ни одна стратегия не сработала"
     return 1
   fi
   save_strategy "$best"
   cmd_on "$best" >/dev/null
-  echo "Выбрана: $best ($best_ok/$total)"
+  echo "Выбрана: $best ($best_ok/$((best_ok + best_fail)))"
+  ((best_fail == 0)) || echo "Не открылись:$best_failed"
 }
 
-# Для недоступного домена: если по адресу от публичного DNS он открывается,
-# значит системный DNS отдаёт подменённый адрес и zapret тут не поможет.
-diagnose() {
+# Домен отвечает чужим сертификатом. Если по адресу от публичного DNS он
+# открывается нормально, значит системный DNS отдаёт подменённый адрес.
+dns_spoofed() {
   local real
   real=$(curl -s -m 5 -H 'accept: application/dns-json' \
     "https://1.1.1.1/dns-query?name=$1&type=A" 2>/dev/null |
     jq -r '[.Answer[]? | select(.type == 1)][0].data // empty' 2>/dev/null)
-  if [[ -n $real ]] && ! getent ahostsv4 "$1" | grep -qF "$real " &&
+  [[ -n $real ]] && ! getent ahostsv4 "$1" | grep -qF "$real " &&
     [[ $(curl -4 -s -o /dev/null -m "$PROBE_TIMEOUT" --resolve "$1:443:$real" \
-      -w '%{http_code}' "https://$1" 2>/dev/null) != 000 ]]; then
-    echo "недоступен: DNS подменяет адрес"
-  else
-    echo "недоступен"
-  fi
+      -w '%{http_code}' "https://$1" 2>/dev/null) != 000 ]]
 }
 
-# Проходит по основным доменам и показывает, какие сейчас открываются.
+# Проходит по всем доменам из списка и показывает, какие сейчас открываются.
 cmd_check() {
-  local tmp i entry group host label code secs prev="" ok=0 total=0 urls=()
-  for entry in "${CHECK_HOSTS[@]}"; do
-    urls+=("https://${entry#*|}")
-  done
+  local tmp i f code secs exit host mark note ok=0 fail=0 skip=0 spoof=0 net="нет" list cells=() half
+  mapfile -t list < <(hosts)
   tmp=$(mktemp -d)
+  mkdir "$tmp/control" "$tmp/hosts"
 
-  printf 'Zapret: %s\n\n' "$(cmd_status)"
-  probe_all "$tmp" "${urls[@]}"
+  probe_all "$tmp/control" "${CONTROL_HOSTS[@]}" &
+  # Пачками, чтобы длинный список не запускал сотни запросов разом.
+  for ((i = 0; i < ${#list[@]}; i += PROBE_MAX_HOSTS)); do
+    mkdir "$tmp/batch"
+    probe_retry "$tmp/batch" "${list[@]:i:PROBE_MAX_HOSTS}"
+    for f in "$tmp/batch"/*; do mv "$f" "$tmp/hosts/$((i + ${f##*/}))"; done
+    rmdir "$tmp/batch"
+  done
+  wait
 
-  for ((i = 0; i < ${#CHECK_HOSTS[@]}; i++)); do
-    entry=${CHECK_HOSTS[i]}
-    group=${entry%%|*}
-    host=${entry#*|}
-    # Дополняем подпись пробелами вручную: printf считает ширину в байтах.
-    label=""
-    if [[ $group != "$prev" ]]; then
-      label=$group
-      prev=$group
-    fi
-    label+=$(printf '%*s' $((9 - ${#label})) '')
-    read -r code secs <"$tmp/$i"
-    if [[ ${code:-000} != 000 ]]; then
-      printf '  %-9s \033[32m●\033[0m %-28s %4d мс\n' "$label" "$host" "$(awk -v s="$secs" 'BEGIN { printf "%d", s * 1000 }')"
-      [[ $group == Контроль ]] || ok=$((ok + 1))
-    else
-      printf '  %-9s \033[31m○\033[0m %-28s %s\n' "$label" "$host" "$(diagnose "$host")"
-    fi
-    [[ $group == Контроль ]] || total=$((total + 1))
+  for ((i = 0; i < ${#CONTROL_HOSTS[@]}; i++)); do
+    read -r code _ <"$tmp/control/$i"
+    [[ ${code:-000} == 000 ]] || net="есть"
+  done
+  printf 'Zapret: %s · интернет: %s\n\n' "$(cmd_status)" "$net"
+
+  for ((i = 0; i < ${#list[@]}; i++)); do
+    host=${list[i]}
+    read -r code secs exit <"$tmp/hosts/$i"
+    case $(verdict "$code" "$exit") in
+      ok)
+        ok=$((ok + 1))
+        mark='\033[32m●\033[0m'
+        note=$(awk -v s="$secs" 'BEGIN { printf "%d мс", s * 1000 }')
+        ;;
+      fail)
+        fail=$((fail + 1))
+        mark='\033[31m○\033[0m'
+        note="нет ответа"
+        ;;
+      noaddr)
+        skip=$((skip + 1))
+        mark='\033[2m·\033[0m'
+        note="нет адреса"
+        ;;
+      cert)
+        if dns_spoofed "$host"; then
+          spoof=$((spoof + 1))
+          mark='\033[33m◍\033[0m'
+          note="подмена DNS"
+        else
+          skip=$((skip + 1))
+          mark='\033[2m·\033[0m'
+          note="не сайт"
+        fi
+        ;;
+    esac
+    ((${#host} <= 30)) || host=${host:0:29}…
+    # Ширину добиваем пробелами вручную: printf считает её в байтах.
+    cells+=("$(printf '%b %s%*s %s%*s' "$mark" "$host" $((30 - ${#host})) '' "$note" $((12 - ${#note})) '')")
   done
   rm -rf "$tmp"
 
-  printf '\nОткрывается %d из %d.\n' "$ok" "$total"
-  ((ok == total))
+  # Две колонки, чтобы список помещался в окно терминала.
+  half=$(((${#cells[@]} + 1) / 2))
+  for ((i = 0; i < half; i++)); do
+    printf '  %s  %s\n' "${cells[i]}" "${cells[i + half]:-}"
+  done
+
+  printf '\nОткрывается %d из %d.' "$ok" "$((ok + fail + spoof))"
+  ((spoof == 0)) || printf ' Подмена DNS: %d — zapret тут не поможет, нужен другой DNS.' "$spoof"
+  ((skip == 0)) || printf ' Не проверяется: %d.' "$skip"
+  echo
+  ((fail == 0 && spoof == 0))
 }
+
 
 # Состояние для окошка, одним JSON.
 cmd_state() {
@@ -358,10 +446,10 @@ case ${1:-menu} in
   toggle           включить/выключить
   on | off         включить / выключить
   status           текущее состояние
-  check            пройтись по доменам и показать, что открывается
+  check            пройтись по списку доменов и показать, что открывается
   list             список стратегий
   strategy <имя>   выбрать стратегию (можно только номер)
-  test [--all]     перебрать стратегии и выбрать рабочую
+  test [--all]     перебрать стратегии на доменах из списка и выбрать рабочую
   autostart <on|off|toggle|status>   автозапуск при входе в систему
   hosts            править список доменов
   term <команда>   выполнить команду в плавающем терминале
