@@ -48,7 +48,7 @@ Item {
     return [
       { icon: "󰐥", label: "Включён", detail: "", checked: root.zapret.on, kind: "run", args: ["toggle"] },
       { icon: "󰑓", label: "Автозапуск", detail: "", checked: root.zapret.autostart, kind: "run", args: ["autostart", "toggle"] },
-      { icon: "󰒓", label: "Стратегия", detail: "", checked: false, kind: "menu", args: [] },
+      { icon: "󰒓", label: "Стратегия", detail: "", value: root.zapret.strategy, checked: false, kind: "menu", args: [] },
       { icon: "󰄴", label: "Проверка", detail: "", checked: false, kind: "term", args: ["check"] },
       { icon: "󰙨", label: "Автоподбор", detail: "", checked: false, kind: "term", args: ["test"] },
       { icon: "󰈙", label: "Список доменов", detail: "", checked: false, kind: "term", args: ["hosts"] }
@@ -288,9 +288,8 @@ Item {
           textFormat: Text.PlainText
           width: parent.width
           horizontalAlignment: Text.AlignHCenter
-          text: root.view === "strategy"
-            ? "Стратегия…"
-            : (root.zapret.on ? "включён · " : "выключен · ") + root.zapret.strategy
+          visible: root.view === "strategy"
+          text: "Стратегия…"
           color: root.foreground
           opacity: 0.58
           font.family: root.fontFamily
@@ -338,7 +337,7 @@ Item {
             Column {
               anchors.left: iconText.right
               anchors.leftMargin: Style.space(6)
-              anchors.right: trail.left
+              anchors.right: valueText.left
               anchors.rightMargin: Style.space(6)
               anchors.verticalCenter: parent.verticalCenter
               spacing: Style.space(3)
@@ -365,6 +364,23 @@ Item {
                 font.pixelSize: Style.font.bodySmall
                 elide: Text.ElideRight
               }
+            }
+
+            // Текущее значение пункта (например, выбранная стратегия).
+            Text {
+              id: valueText
+              textFormat: Text.PlainText
+              text: row.modelData.value || ""
+              color: root.foreground
+              opacity: 0.52
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.bodySmall
+              width: Math.min(implicitWidth, row.width * 0.55)
+              horizontalAlignment: Text.AlignRight
+              elide: Text.ElideMiddle
+              anchors.right: trail.left
+              anchors.rightMargin: text.length > 0 ? Style.space(4) : 0
+              anchors.verticalCenter: parent.verticalCenter
             }
 
             Text {
