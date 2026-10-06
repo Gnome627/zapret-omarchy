@@ -269,7 +269,7 @@ Item {
           anchors.horizontalCenter: parent.horizontalCenter
           visible: columns > 0
           width: columns * cell
-          height: lines.length * cell * 2 + Style.space(8)
+          height: Style.space(8) + lines.length * cell * 2 + Style.space(12)
           onLinesChanged: requestPaint()
           onCellChanged: requestPaint()
           onInkChanged: requestPaint()
